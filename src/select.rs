@@ -3,8 +3,11 @@
 //!
 //! Syncmer membership depends only on the k-mer itself, so intact k-mers are
 //! reselected across read boundaries and flanking errors. Minimizers depend on
-//! neighbouring k-mers and do not have this property. Scale D retains about 1/D
-//! of the selected distinct hashes; it does not impose a fixed memory limit.
+//! neighbouring k-mers and do not have this property. Plain FracMinHash
+//! (`SelectorKind::All`) shares the syncmer's content-defined robustness but
+//! not its spacing guarantee; it is provided so the two can be compared at
+//! matched density. Scale D retains about 1/D of the selected distinct hashes;
+//! it does not impose a fixed memory limit.
 
 use std::collections::VecDeque;
 
@@ -79,10 +82,14 @@ pub enum SelectorKind
     {
         w: u8
     },
+    /// Every k-mer, subject only to low-complexity masking and the scale
+    /// threshold: plain FracMinHash. Content-defined like a syncmer, without
+    /// the spacing guarantee. Included for benchmarking against syncmers.
+    All,
 }
 
 /// A fully-specified selection configuration.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SelectConfig
 {
     pub k: usize,
@@ -125,8 +132,32 @@ impl SelectConfig
                     return Err("minimizer w must be >= 1".into());
                 }
             }
+            SelectorKind::All => {}
         }
         Ok(())
+    }
+
+    /// Expected fraction of a random sequence's k-mers this configuration
+    /// selects: the selector's density times the FracMinHash retention `1/D`
+    /// (the sampling hash is mixed, so it is uniform and the threshold keeps
+    /// exactly that share). A k-mer shared by two sequences is selected in both
+    /// or in neither, so chance coincidences between two selected sets live in
+    /// a universe of `4^k / 2` canonical k-mers times this density — the
+    /// quantity a chance null must be sized by.
+    pub fn expected_density(&self) -> f64
+    {
+        let selector = match self.kind
+        {
+            SelectorKind::OpenSyncmer { s, offset } =>
+            {
+                let w = self.k - s as usize + 1;
+                let mirror = w - 1 - offset as usize;
+                if mirror == offset as usize { 1.0 / w as f64 } else { 2.0 / w as f64 }
+            }
+            SelectorKind::Minimizer { w } => 2.0 / (w as f64 + 1.0),
+            SelectorKind::All => 1.0,
+        };
+        selector / self.scale.max(1) as f64
     }
 
     /// FracMinHash threshold: a hash is kept iff `hash <= max_hash()`.
@@ -157,8 +188,20 @@ impl SelectConfig
                 self.select_syncmer(seq, s as usize, offset as usize, maxh, emit)
             }
             SelectorKind::Minimizer { w } => self.select_minimizer(seq, w as usize, maxh, emit),
+            SelectorKind::All => self.select_all(seq, maxh, emit),
         }
         Ok(())
+    }
+
+    fn select_all(&self, seq: &[u8], maxh: u64, emit: &mut impl FnMut(u64))
+    {
+        crate::hash::for_each_canonical(seq, self.k, |p, kh| {
+            let hash = crate::hash::sampling_hash(kh);
+            if hash <= maxh && !is_low_complexity(&seq[p..p + self.k])
+            {
+                emit(hash);
+            }
+        });
     }
 
     fn select_syncmer(
@@ -282,6 +325,67 @@ mod tests
         })
         .unwrap();
         set
+    }
+
+    #[test]
+    fn all_selector_is_strand_consistent_and_matches_syncmer_conservation()
+    {
+        // Plain FracMinHash must be strandless, and — being content-defined —
+        // must reselect exactly the intact k-mers a syncmer would: every hash
+        // the syncmer selects at scale 1 is a k-mer `All` selects at scale 1.
+        let all = SelectConfig { k: 15, scale: 1, kind: SelectorKind::All };
+        let sync = SelectConfig {
+            k: 15,
+            scale: 1,
+            kind: SelectorKind::OpenSyncmer { s: 7, offset: 0 },
+        };
+        let seq = b"ACGTTGCAACGTACGTAACCGGTTACGTTTGGCCAATGCATGCAACGTACGATCGATCGGCTA";
+        let rc: Vec<u8> = seq
+            .iter()
+            .rev()
+            .map(|&b| match b
+            {
+                b'A' => b'T',
+                b'C' => b'G',
+                b'G' => b'C',
+                b'T' => b'A',
+                x => x,
+            })
+            .collect();
+        assert_eq!(select_set(&all, seq), select_set(&all, &rc));
+        assert!(select_set(&sync, seq).is_subset(&select_set(&all, seq)));
+        assert!(select_set(&sync, seq).len() < select_set(&all, seq).len());
+        let scaled = SelectConfig { scale: 3, ..all };
+        assert!(select_set(&scaled, seq).is_subset(&select_set(&all, seq)));
+    }
+
+    #[test]
+    fn expected_density_matches_measured()
+    {
+        let mut x = 11u64;
+        let seq: Vec<u8> = (0..400_000)
+            .map(|_| {
+                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                b"ACGT"[(x >> 62) as usize]
+            })
+            .collect();
+        let n = (seq.len() - 20) as f64;
+        for (kind, scale) in [
+            (SelectorKind::OpenSyncmer { s: 11, offset: 0 }, 1),
+            (SelectorKind::OpenSyncmer { s: 11, offset: 5 }, 1),
+            (SelectorKind::OpenSyncmer { s: 11, offset: 0 }, 7),
+            (SelectorKind::Minimizer { w: 11 }, 1),
+            (SelectorKind::All, 9),
+        ]
+        {
+            let cfg = SelectConfig { k: 21, scale, kind };
+            let got = select_set(&cfg, &seq).len() as f64 / n;
+            let want = cfg.expected_density();
+            assert!(
+                (got - want).abs() < 0.08 * want,
+                "{kind:?} scale {scale}: measured {got:.4}, expected {want:.4}"
+            );
+        }
     }
 
     #[test]
@@ -440,6 +544,16 @@ mod tests
                     {
                         emit(pos, h.unwrap());
                         last = Some(pos);
+                    }
+                }
+            }
+            SelectorKind::All =>
+            {
+                for (p, kh) in kh.iter().enumerate()
+                {
+                    if let Some(h) = kh
+                    {
+                        emit(p, *h);
                     }
                 }
             }

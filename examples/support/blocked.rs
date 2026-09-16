@@ -125,6 +125,7 @@ pub fn write(sf: &SignatureFile, path: &Path, delta: bool) -> Result<()>
         {
             SelectorKind::OpenSyncmer { s, offset } => [0, s, offset],
             SelectorKind::Minimizer { w } => [1, w, 0],
+            SelectorKind::All => [2, 0, 0],
         };
         ensure!(sig.name.len() <= 4096, "benchmark reference name too long");
         let metadata = Metadata {
@@ -172,6 +173,7 @@ pub fn read(path: &Path) -> Result<SignatureFile>
         {
             [0, s, offset] => SelectorKind::OpenSyncmer { s, offset },
             [1, w, 0] => SelectorKind::Minimizer { w },
+            [2, 0, 0] => SelectorKind::All,
             _ => anyhow::bail!("invalid selector"),
         };
         let mut hashes = Vec::new();

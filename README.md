@@ -32,6 +32,10 @@ fracsync sketch refs/*.fa -o open.sig -k 21 --s 11 --offset 5
 # Window-dependent minimizers, for comparison.
 fracsync sketch refs/*.fa -o min.sig --selector minimizer --w 11
 
+# Every k-mer under the scale threshold (plain FracMinHash), for comparison:
+# the same content-defined robustness as a syncmer, no spacing guarantee.
+fracsync sketch refs/*.fa -o all.sig --selector all --scale 11
+
 fracsync info refs.sig
 ```
 
@@ -94,6 +98,13 @@ decision. This is the rule inherited from the NCSI draft.
 | `{0, 10}` (default) | Edgar's **closed** endpoint scheme, with our tie policy |
 | `{5}` | Central **open** syncmer |
 | `{o, 10-o}` | A symmetric two-offset instance of parameterized syncmers |
+
+Per-k-mer conservation under error is a property of any rule that decides from
+the k-mer alone, so a syncmer and plain FracMinHash (`--selector all`) at the
+same density reselect the same intact k-mers; what the closed syncmer adds is
+bounded spacing, which matters for short, noisy reads. The library exposes
+`SelectConfig::expected_density()` — selector density times `1/D` — so a
+chance model can be sized by the universe of *selectable* k-mers.
 
 [Dutta, Pellow and Shamir (2022)](https://doi.org/10.1371/journal.pcbi.1010638)
 study parameterized syncmer schemes and how offset choices affect spacing and

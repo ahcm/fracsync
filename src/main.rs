@@ -86,6 +86,8 @@ enum Selector
     Syncmer,
     /// Minimizer: for comparison
     Minimizer,
+    /// Every k-mer under the scale threshold (plain FracMinHash): for comparison
+    All,
 }
 
 impl SelectArgs
@@ -99,6 +101,7 @@ impl SelectArgs
                 offset: self.offset,
             },
             Selector::Minimizer => SelectorKind::Minimizer { w: self.w },
+            Selector::All => SelectorKind::All,
         };
         SelectConfig {
             k: self.k,
@@ -117,6 +120,7 @@ fn selector_desc(cfg: &SelectConfig) -> String
             format!("syncmer s={s} offset={offset} mirror={}", cfg.k - s as usize - offset as usize)
         }
         SelectorKind::Minimizer { w } => format!("minimizer w={w}"),
+        SelectorKind::All => "all k-mers (FracMinHash)".to_string(),
     }
 }
 
