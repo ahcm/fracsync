@@ -1,14 +1,13 @@
 # Bounded bitcode prototype: 2026-09-16
 
-**Recommendation:** raw bitcode blocks are a promising replacement for bincode
-in a future `FRACSYN3`. Do not enable delta encoding by default on the strength
-of this experiment: it did not reduce the large files and made their decoding
-slower. Keep the current production format until a migration is implemented and
-representative user databases have been measured.
+**Historical measurements:** this report compares the former `FRACSYN2`
+bincode implementation with experimental bitcode codecs. Production now uses
+`FRACSYN3` bounded raw bitcode blocks; bincode has been removed. The recorded
+numbers below have not been remeasured for the production format.
 
-This change adds a benchmark and experimental codec only. The library/CLI still
-read and write `FRACSYN2`; bitcode `=0.6.9` is a development-only dependency.
-No existing signature needs conversion for this experiment.
+The current benchmark's `production` baseline uses `FRACSYN3`, so running it now
+compares production and prototype bitcode framing; it does not reproduce the old
+bincode timings. Delta encoding remains experimental.
 
 ## Reproduce
 
@@ -19,7 +18,7 @@ cargo test --example codec_bench
 ```
 
 The first command creates deterministic input sketches and `.bench` outputs in
-the output directory. The second uses an existing `FRACSYN2` database. The program
+the output directory. The second uses an existing `FRACSYN3` database. The program
 prints TSV to stdout; [recorded raw measurements](codec-benchmark.tsv) include
 file bytes, timing, and Linux memory measurements.
 
@@ -29,7 +28,7 @@ frequency control was applied.
 
 ## Method
 
-The baseline calls the **actual production** `SignatureFile::write/read`, including
+At measurement time, the baseline called the **then-production** `SignatureFile::write/read`, including
 its validation and incremental bincode reader. Each encode and decode runs in a
 new child process. Timing includes file open/close, buffered I/O and validation;
 input preparation, fixture generation and round-trip comparison are outside the
@@ -62,16 +61,16 @@ Sizes are decimal MB; times are milliseconds.
 
 | Input | Codec | File MB | Write ms | Read ms |
 |-------|-------|--------:|---------:|--------:|
-| DNA scale 1 | Current bincode | 7.801 | 5.400 | 13.312 |
+| DNA scale 1 | Historical bincode | 7.801 | 5.400 | 13.312 |
 | DNA scale 1 | Bitcode raw blocks | 6.938 | 2.643 | 2.676 |
 | DNA scale 1 | Bitcode delta blocks | 6.938 | 2.901 | 3.184 |
-| DNA scale 10 | Current bincode | 0.778 | 0.507 | 1.473 |
+| DNA scale 10 | Historical bincode | 0.778 | 0.507 | 1.473 |
 | DNA scale 10 | Bitcode raw blocks | 0.692 | 0.238 | 0.321 |
 | DNA scale 10 | Bitcode delta blocks | 0.692 | 0.259 | 0.358 |
-| Many small references | Current bincode | 0.600 | 0.391 | 1.162 |
+| Many small references | Historical bincode | 0.600 | 0.391 | 1.162 |
 | Many small references | Bitcode raw blocks | 0.602 | 0.395 | 0.510 |
 | Many small references | Bitcode delta blocks | 0.598 | 0.440 | 0.585 |
-| Large uniform set | Current bincode | 72.000 | 47.368 | 104.136 |
+| Large uniform set | Historical bincode | 72.000 | 47.368 | 104.136 |
 | Large uniform set | Bitcode raw blocks | 64.033 | 26.052 | 22.667 |
 | Large uniform set | Bitcode delta blocks | 64.033 | 25.983 | 27.125 |
 
@@ -106,7 +105,7 @@ reuse can hide allocations; small differences are noise. On systems without
 
 | Large uniform set | Write peak KiB | Additional write high-water KiB | Read peak KiB |
 |-------------------|---------------:|-------------------------------:|--------------:|
-| Current bincode | 67,552 | 68 | 67,548 |
+| Historical bincode | 67,552 | 68 | 67,548 |
 | Bitcode raw | 66,284 | 96 | 67,608 |
 | Bitcode delta | 67,588 | 96 | 67,540 |
 
@@ -147,7 +146,6 @@ support its format in the production CLI.
 Bitcode's [documented API](https://docs.rs/bitcode/0.6.9/bitcode/) is buffer-based
 and does not promise a stable format across major versions. Its
 [reusable Buffer](https://docs.rs/bitcode/0.6.9/bitcode/struct.Buffer.html) avoids
-reallocating codec scratch space for every frame. Any production migration should
-retain explicit format versioning and fixed fixtures, document the exact schema,
-and provide a `FRACSYN2` conversion path or a clear re-sketch instruction. Hash
-selection need not change when changing this storage encoding.
+reallocating codec scratch space for every frame. The production migration uses
+explicit versioning, fixed fixtures, bounded hash blocks, a documented schema,
+and re-sketch instructions for older formats. Hash selection is unchanged.

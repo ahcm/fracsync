@@ -1,6 +1,6 @@
 [package]
 name = "fracsync"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Andreas Hauser <andreas.github@icloud.com>"]
 description = "FracSync substrate (strand-symmetric syncmers + canonical hashing + FracMinHash) with a sketch/containment CLI"
@@ -12,7 +12,7 @@ fastx = { version = "0.6.1", default-features = false, features = ["rust-backend
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1"
-bincode = "2"        # compact signature serialization
+bitcode = "=0.6.9"   # versioned, bounded signature serialization
 serde = { version = "1", features = ["derive"] }
 
 [profile.release]
@@ -26,7 +26,3 @@ path = "src/lib.rs"
 [[bin]]
 name = "fracsync"
 path = "src/main.rs"
-
-[dev-dependencies]
-# Experimental signature-codec benchmark; not used by the library or CLI.
-bitcode = "=0.6.9"

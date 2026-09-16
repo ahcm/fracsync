@@ -79,7 +79,7 @@ fn sketch_contain_info_and_format_migration()
         );
     }
     let mut bytes = std::fs::read(fixture.path("db.sig")).unwrap();
-    assert_eq!(&bytes[..8], b"FRACSYN2");
+    assert_eq!(&bytes[..8], b"FRACSYN3");
     bytes[..8].copy_from_slice(b"FRACSYN1");
     std::fs::write(fixture.path("legacy.sig"), bytes).unwrap();
     let rejected = cli(&fixture.0, &["contain", "legacy.sig", "query.fq"]);

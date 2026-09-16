@@ -159,13 +159,19 @@ an unbiased estimate of containment of the underlying selected sets. Reporting
 zero for empty sketches introduces bias, as discussed by
 [Hera et al. (2023)](https://doi.org/10.1101/gr.277651.123).
 
-**Signature format is now `FRACSYN2`. Re-sketch existing references.**
-`FRACSYN1` files are rejected with an explicit migration message, because stored
-hashes and scale semantics changed; merely changing the header is not a valid
-conversion. This crate does not promise hash or file compatibility with NCSI,
-sourmash, or other ntHash implementations. Reads and writes validate selection
-parameters, parameter agreement across references, strictly increasing hashes,
-and the scale threshold. Readers also reject truncated files and trailing data.
+**Signature format is now `FRACSYN3`, using bitcode 0.6.9. Re-sketch old files.**
+`FRACSYN1` and `FRACSYN2` files are rejected with an explicit migration message;
+changing the header is not a conversion. Version 3 changes storage only: hashes
+and selection semantics are unchanged from version 2. There is no bincode
+runtime or development dependency. This crate does not promise file compatibility
+with NCSI, sourmash, or other ntHash implementations.
+
+Signatures stream through bounded bitcode frames, with at most 4096 hashes per
+block and 64 KiB per encoded frame. Reference names may contain up to 4096 UTF-8
+bytes. Reads and writes validate selection parameters, parameter agreement across
+references, strictly increasing hashes, and the scale threshold. Readers also
+reject truncated files, invalid frames, and trailing data. The exact layout is
+specified in [the format documentation](docs/signature-format.md).
 
 ## Memory and runtime
 
@@ -190,9 +196,8 @@ parallel query engine here.
 
 ## Experimental signature-codec benchmark
 
-A separate prototype compares the current `FRACSYN2` bincode I/O with bounded
-bitcode blocks, with and without hash deltas. Bitcode is pinned to 0.6.9 as a
-**development-only dependency**; the library and CLI still use `FRACSYN2`.
+The benchmark compares production `FRACSYN3` I/O with experimental raw and
+delta bitcode framing. Bitcode is pinned to 0.6.9 for both the library and CLI.
 
 ```sh
 cargo run --release --example codec_bench -- --out /tmp/fracsync-codecs --repeats 5
@@ -201,8 +206,8 @@ cargo run --release --example codec_bench -- --input refs.sig --out /tmp/fracsyn
 cargo test --example codec_bench
 ```
 
-The [benchmark report](docs/codec-benchmark.md) records the method, raw results,
-limitations and recommendation. On the generated large sketches, raw bitcode
+The [historical benchmark report](docs/codec-benchmark.md) records the original
+bincode comparison, method, raw results, and limitations. On the generated large sketches, raw bitcode
 blocks were about 11% smaller and substantially faster to read. Delta encoding
 gave no additional size reduction on those large cases. Small-reference framing
 overhead matters, so these are not universal compression claims. Prototype
@@ -228,7 +233,7 @@ hashes.dedup();
 `SelectConfig::select` now returns `Result<(), String>` and validates before
 emitting. Callers must handle that result. The callback can receive duplicates.
 `hash::for_each_canonical` still exposes the raw ntHash-style values; those are
-not the mixed values stored in version-2 signatures. Use `select` to reproduce
+not the mixed values stored in version-3 signatures. Use `select` to reproduce
 a signature's hashes.
 
 | Module | Role |

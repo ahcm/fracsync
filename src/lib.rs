@@ -6,7 +6,7 @@
 //! - [`hash`] — canonical ntHash-style rolling hashes (raw, unmixed values).
 //! - [`select`] — mirrored syncmers (closed endpoints by default) or
 //!   window-dependent minimizers, low-complexity masking and mixed-hash sampling.
-//! - [`sketch`] — validated version-2 signatures and record-at-a-time sketching.
+//! - [`sketch`] — validated version-3 signatures and record-at-a-time sketching.
 //! - [`contain`] — selected-set containment and an ANI point estimate without
 //!   coverage correction or confidence intervals.
 //!
@@ -32,3 +32,6 @@ pub mod contain;
 pub mod hash;
 pub mod select;
 pub mod sketch;
+
+/// Bounded bitcode framing shared with downstream signature formats.
+pub mod codec;

@@ -11,7 +11,7 @@
 
 use std::collections::VecDeque;
 
-use bincode::{Decode, Encode};
+use bitcode::{Decode, Encode};
 use serde::Serialize;
 
 #[inline]
@@ -132,7 +132,8 @@ impl SelectConfig
                     return Err("minimizer w must be >= 1".into());
                 }
             }
-            SelectorKind::All => {}
+            SelectorKind::All =>
+            {}
         }
         Ok(())
     }
@@ -152,7 +153,14 @@ impl SelectConfig
             {
                 let w = self.k - s as usize + 1;
                 let mirror = w - 1 - offset as usize;
-                if mirror == offset as usize { 1.0 / w as f64 } else { 2.0 / w as f64 }
+                if mirror == offset as usize
+                {
+                    1.0 / w as f64
+                }
+                else
+                {
+                    2.0 / w as f64
+                }
             }
             SelectorKind::Minimizer { w } => 2.0 / (w as f64 + 1.0),
             SelectorKind::All => 1.0,
@@ -333,7 +341,11 @@ mod tests
         // Plain FracMinHash must be strandless, and — being content-defined —
         // must reselect exactly the intact k-mers a syncmer would: every hash
         // the syncmer selects at scale 1 is a k-mer `All` selects at scale 1.
-        let all = SelectConfig { k: 15, scale: 1, kind: SelectorKind::All };
+        let all = SelectConfig {
+            k: 15,
+            scale: 1,
+            kind: SelectorKind::All,
+        };
         let sync = SelectConfig {
             k: 15,
             scale: 1,
@@ -365,7 +377,9 @@ mod tests
         let mut x = 11u64;
         let seq: Vec<u8> = (0..400_000)
             .map(|_| {
-                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                x = x
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 b"ACGT"[(x >> 62) as usize]
             })
             .collect();

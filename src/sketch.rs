@@ -5,11 +5,11 @@
 
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Take, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use bincode::{Decode, Encode};
+use bitcode::{Decode, Encode};
 use fastx::FastX::{self, FastARecord, FastQRead, FastQRecord, FastXFormat, FastXRead};
 use flate2::read::MultiGzDecoder;
 
@@ -17,7 +17,7 @@ use crate::select::{SelectConfig, SelectorKind};
 
 /// Magic + format version, so a `.sig` file is self-describing and mismatched
 /// formats fail loudly instead of decoding into garbage.
-const SIG_MAGIC: &[u8; 8] = b"FRACSYN2";
+const SIG_MAGIC: &[u8; 8] = b"FRACSYN3";
 
 /// One reference reduced to its selected hashes.
 #[derive(Encode, Decode, Clone)]
@@ -60,6 +60,7 @@ impl SignatureFile
             let threshold = u64::MAX / cfg.scale;
             for s in &self.signatures
             {
+                anyhow::ensure!(s.name.len() <= crate::codec::MAX_NAME, "reference name too long");
                 anyhow::ensure!(
                     s.k as usize == cfg.k && s.scale == cfg.scale && s.kind == cfg.kind,
                     "signatures have mixed selection parameters"
@@ -87,8 +88,7 @@ impl SignatureFile
             File::create(path).with_context(|| format!("creating {}", path.display()))?,
         );
         out.write_all(SIG_MAGIC)?;
-        bincode::encode_into_std_write(self, &mut out, bincode::config::standard())
-            .context("encoding signatures")?;
+        self.write_body(&mut out)?;
         out.flush()
             .with_context(|| format!("writing {}", path.display()))?;
         Ok(())
@@ -103,10 +103,10 @@ impl SignatureFile
         input
             .read_exact(&mut magic)
             .context("reading signature header")?;
-        if &magic == b"FRACSYN1"
+        if &magic == b"FRACSYN1" || &magic == b"FRACSYN2"
         {
             anyhow::bail!(
-                "{}: legacy FRACSYN1 hashes; re-sketch the source sequences with this version",
+                "{}: legacy signature format; re-sketch the source sequences with this version",
                 path.display()
             );
         }
@@ -115,63 +115,63 @@ impl SignatureFile
             "{}: unsupported fracsync signature format",
             path.display()
         );
-        // Decode collections incrementally: derived Vec decoding trusts length
-        // prefixes enough to allocate before discovering a truncated payload.
-        let remaining = input.get_ref().metadata()?.len().saturating_sub(8);
-        let mut body = input.take(remaining);
-        let sf = read_body(&mut body).with_context(|| format!("decoding {}", path.display()))?;
-        anyhow::ensure!(
-            body.read(&mut [0u8; 1])? == 0,
-            "{}: trailing data after signatures",
-            path.display()
-        );
+        let sf = read_body(&mut input).with_context(|| format!("decoding {}", path.display()))?;
+        crate::codec::finish(&mut input)?;
         sf.validate()
             .with_context(|| format!("validating {}", path.display()))?;
         Ok(sf)
     }
 }
 
-// These helpers read the same standard-bincode field layout that Encode emits,
-// but do not preallocate whole collections from untrusted length prefixes.
-fn read_value<T: Decode<()>>(input: &mut impl Read) -> Result<T>
+// Hashes are separate fixed-size bitcode arrays, never a decoded Vec length
+// supplied by the file. Metadata frames and hash-block scratch space are bounded.
+#[derive(Encode, Decode)]
+struct Metadata
 {
-    Ok(bincode::decode_from_std_read(input, bincode::config::standard())?)
+    name: String,
+    k: u8,
+    scale: u64,
+    kind: SelectorKind,
+    hashes: u64,
 }
 
-fn read_count(input: &mut Take<impl Read>) -> Result<usize>
+impl SignatureFile
 {
-    let len: usize = read_value(input)?;
-    // Every element used by this format occupies at least one encoded byte.
-    anyhow::ensure!(
-        len as u64 <= input.limit(),
-        "collection length exceeds remaining signature bytes"
-    );
-    Ok(len)
-}
-
-fn read_values<T: Decode<()>>(input: &mut Take<impl Read>) -> Result<Vec<T>>
-{
-    let len = read_count(input)?;
-    let mut values = Vec::with_capacity(len.min(4096));
-    for _ in 0..len
+    fn write_body(&self, out: &mut impl Write) -> Result<()>
     {
-        values.push(read_value(input)?);
+        crate::codec::write_count(out, self.signatures.len() as u64)?;
+        for sig in &self.signatures
+        {
+            let metadata = Metadata {
+                name: sig.name.clone(),
+                k: sig.k,
+                scale: sig.scale,
+                kind: sig.kind,
+                hashes: sig.hashes.len() as u64,
+            };
+            crate::codec::write_frame(out, &bitcode::encode(&metadata))?;
+            crate::codec::write_hashes(out, &sig.hashes)?;
+        }
+        Ok(())
     }
-    Ok(values)
 }
 
-fn read_body(input: &mut Take<impl Read>) -> Result<SignatureFile>
+fn read_body(input: &mut impl Read) -> Result<SignatureFile>
 {
-    let count = read_count(input)?;
+    let count = crate::codec::read_count(input)?;
     let mut signatures = Vec::new();
     for _ in 0..count
     {
+        let bytes = crate::codec::read_frame(input)?;
+        let m: Metadata = bitcode::decode(&bytes).context("decoding signature metadata")?;
+        anyhow::ensure!(m.name.len() <= crate::codec::MAX_NAME, "reference name too long");
+        let hashes = crate::codec::read_hashes(input, m.hashes)?;
         signatures.push(Signature {
-            name: String::from_utf8(read_values(input)?)?,
-            k: read_value(input)?,
-            scale: read_value(input)?,
-            kind: read_value(input)?,
-            hashes: read_values(input)?,
+            name: m.name,
+            k: m.k,
+            scale: m.scale,
+            kind: m.kind,
+            hashes,
         });
     }
     Ok(SignatureFile { signatures })
@@ -322,6 +322,25 @@ mod tests
     use super::*;
 
     #[test]
+    fn version_three_fixture_is_stable()
+    {
+        let golden = include_bytes!("../tests/fixtures/fracsync-v3.sig");
+        let path = std::env::temp_dir().join(format!("fracsync_golden_{}.sig", std::process::id()));
+        std::fs::write(&path, golden).unwrap();
+        let sf = SignatureFile::read(&path).unwrap();
+        assert_eq!(sf.signatures.len(), 1);
+        let sig = &sf.signatures[0];
+        assert_eq!(sig.name, "golden");
+        assert_eq!(sig.k, 21);
+        assert_eq!(sig.scale, 1);
+        assert_eq!(sig.kind, SelectorKind::OpenSyncmer { s: 11, offset: 0 });
+        assert_eq!(sig.hashes, vec![0, 1, 42, u64::MAX]);
+        sf.write(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), golden);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn signature_roundtrips()
     {
         let dir = std::env::temp_dir();
@@ -409,7 +428,7 @@ mod tests
             assert!(sf.write(&path).is_err());
             assert_eq!(std::fs::read(&path).unwrap(), b"preserve me");
             let mut bytes = SIG_MAGIC.to_vec();
-            bytes.extend(bincode::encode_to_vec(&sf, bincode::config::standard()).unwrap());
+            sf.write_body(&mut bytes).unwrap();
             std::fs::write(&path, bytes).unwrap();
             assert!(SignatureFile::read(&path).is_err());
         }
@@ -422,7 +441,7 @@ mod tests
         let path = std::env::temp_dir().join(format!("fracsync_format_{}.sig", std::process::id()));
         fixture().write(&path).unwrap();
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(&bytes[..8], b"FRACSYN2");
+        assert_eq!(&bytes[..8], b"FRACSYN3");
         for len in 0..bytes.len()
         {
             std::fs::write(&path, &bytes[..len]).unwrap();
@@ -432,11 +451,14 @@ mod tests
         trailing.push(0);
         std::fs::write(&path, trailing).unwrap();
         assert!(SignatureFile::read(&path).is_err());
-        let mut legacy = bytes;
-        legacy[..8].copy_from_slice(b"FRACSYN1");
-        std::fs::write(&path, legacy).unwrap();
-        let error = SignatureFile::read(&path).err().unwrap().to_string();
-        assert!(error.contains("re-sketch"), "{error}");
+        for magic in [b"FRACSYN1", b"FRACSYN2"]
+        {
+            let mut legacy = bytes.clone();
+            legacy[..8].copy_from_slice(magic);
+            std::fs::write(&path, legacy).unwrap();
+            let error = SignatureFile::read(&path).err().unwrap().to_string();
+            assert!(error.contains("re-sketch"), "{error}");
+        }
         let empty = SignatureFile { signatures: vec![] };
         empty.write(&path).unwrap();
         assert!(SignatureFile::read(&path).unwrap().config().is_none());
@@ -472,27 +494,21 @@ mod tests
     {
         let path =
             std::env::temp_dir().join(format!("fracsync_lengths_{}.sig", std::process::id()));
-        let huge = bincode::encode_to_vec(usize::MAX, bincode::config::standard()).unwrap();
         let mut count = SIG_MAGIC.to_vec();
-        count.extend_from_slice(&huge);
-        let mut name = SIG_MAGIC.to_vec();
-        name.push(1);
-        name.extend_from_slice(&huge);
-        let mut hashes = SIG_MAGIC.to_vec();
-        // One signature; empty name, k=21, scale=1, Minimizer (variant 1), w=1.
-        hashes.extend_from_slice(&[1, 0, 21, 1, 1, 1]);
-        hashes.extend_from_slice(&huge);
-        for bytes in [count, name, hashes]
+        count.extend_from_slice(&u64::MAX.to_le_bytes());
+        let mut frame = SIG_MAGIC.to_vec();
+        frame.extend_from_slice(&1u64.to_le_bytes());
+        frame.extend_from_slice(&u32::MAX.to_le_bytes());
+        for bytes in [count, frame]
         {
             std::fs::write(&path, bytes).unwrap();
-            let error = SignatureFile::read(&path).err().unwrap();
-            assert!(format!("{error:#}").contains("collection length"));
+            assert!(SignatureFile::read(&path).is_err());
         }
         std::fs::remove_file(path).unwrap();
     }
 
     #[test]
-    fn streaming_codec_roundtrips_varints_and_unicode()
+    fn streaming_codec_roundtrips_integer_boundaries_and_unicode()
     {
         let path =
             std::env::temp_dir().join(format!("fracsync_varints_{}.sig", std::process::id()));

@@ -1,4 +1,4 @@
-//! Compare FRACSYN2 with framed bitcode, keeping production I/O unchanged.
+//! Compare production FRACSYN3 with experimental raw/delta bitcode framing.
 //! cargo run --release --example codec_bench -- --out /tmp/fracsync-codecs
 //! Optional: --input existing.sig; --repeats 5. Worker processes isolate RSS.
 #[path = "support/blocked.rs"]
@@ -18,7 +18,7 @@ struct Args
 {
     #[arg(long, default_value = "/tmp/fracsync-codecs")]
     out: PathBuf,
-    /// Benchmark an existing FRACSYN2 database instead of generated fixtures.
+    /// Benchmark an existing FRACSYN3 database instead of generated fixtures.
     #[arg(long)]
     input: Option<PathBuf>,
     #[arg(long, default_value_t = 5)]
@@ -92,7 +92,7 @@ fn make_fixture(label: &str) -> SignatureFile
 
 fn read(codec: &str, path: &Path) -> Result<SignatureFile>
 {
-    if codec == "bincode"
+    if codec == "production"
     {
         SignatureFile::read(path)
     }
@@ -105,7 +105,7 @@ fn write(codec: &str, sf: &SignatureFile, path: &Path) -> Result<()>
 {
     match codec
     {
-        "bincode" => sf.write(path),
+        "production" => sf.write(path),
         "bitcode-raw" => blocked::write(sf, path, false),
         "bitcode-delta" => blocked::write(sf, path, true),
         _ => anyhow::bail!("unknown codec"),
@@ -224,7 +224,7 @@ fn main() -> Result<()>
     println!(
         "dataset\tcodec\tbytes\twrite_ms\tread_ms\twrite_peak_kib\twrite_extra_peak_kib\tread_peak_kib"
     );
-    let codecs = ["bincode", "bitcode-raw", "bitcode-delta"];
+    let codecs = ["production", "bitcode-raw", "bitcode-delta"];
     let exe = std::env::current_exe()?;
     for (label, input) in inputs
     {
