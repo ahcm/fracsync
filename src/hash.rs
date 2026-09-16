@@ -102,11 +102,11 @@ pub(crate) fn canonical_iter(seq: &[u8], k: usize) -> impl Iterator<Item = Optio
     })
 }
 
-/// SplitMix64's bijective finalizer disperses the canonical minimum before
-/// thresholding. This preserves strand symmetry and does not add collisions.
-/// It provides approximately uniform sampling, not a cryptographic hash.
-#[inline]
-pub(crate) fn sampling_hash(mut hash: u64) -> u64
+/// The bijective mix applied to a canonical hash before FracMinHash
+/// thresholding, and the value selectors emit. Public so a caller can map an
+/// emitted hash back to the k-mer positions that produced it (compare
+/// `sampling_hash(raw)` against the selected set), e.g. to measure spacing.
+pub fn sampling_hash(mut hash: u64) -> u64
 {
     hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
