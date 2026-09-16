@@ -1,0 +1,13 @@
+dataset	codec	bytes	write_ms	read_ms	write_peak_kib	write_extra_peak_kib	read_peak_kib
+dna-scale1	bincode	7801176	5.400	13.312	10700	68	10956
+dna-scale1	bitcode-raw	6938101	2.643	2.676	11128	112	10784
+dna-scale1	bitcode-delta	6938101	2.901	3.184	10980	112	11048
+dna-scale10	bincode	777973	0.507	1.473	3724	68	3680
+dna-scale10	bitcode-raw	691990	0.238	0.321	3752	96	3788
+dna-scale10	bitcode-delta	691990	0.259	0.358	3720	96	3788
+many-small	bincode	599801	0.391	1.162	3588	68	3552
+many-small	bitcode-raw	602040	0.395	0.510	3588	100	3796
+many-small	bitcode-delta	598428	0.440	0.585	3588	100	3788
+large-uniform	bincode	72000033	47.368	104.136	67552	68	67548
+large-uniform	bitcode-raw	64033264	26.052	22.667	66284	96	67608
+large-uniform	bitcode-delta	64033264	25.983	27.125	67588	96	67540
